@@ -1,0 +1,71 @@
+name: Build NovaAI (Windows)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build EXE with PyInstaller
+        run: >
+          pyinstaller --noconfirm --onefile --windowed --name NovaAI
+          --collect-submodules keyring.backends
+          --hidden-import keyring.backends.Windows
+          main.py
+
+      - name: Smoke test (EXE exists and has plausible size)
+        shell: pwsh
+        run: |
+          $f = Get-Item dist\NovaAI.exe
+          Write-Host "NovaAI.exe size: $($f.Length) bytes"
+          if ($f.Length -lt 20MB) { throw "EXE zu klein, Build fehlerhaft" }
+          $p = Start-Process dist\NovaAI.exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($p.HasExited) { Write-Host "Hinweis: Prozess beendet (erwartet ohne API-Schluessel nicht zwingend)" }
+          else { Write-Host "Prozess laeuft"; Stop-Process -Id $p.Id -Force }
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item dist\NovaAI.exe out\NovaAI.exe
+          Copy-Item README.md out\README.md
+          Compress-Archive -Path out\* -DestinationPath NovaAI_Setup.zip -Force
+          git archive --format=zip -o NovaAI_Source.zip HEAD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NovaAI
+          path: |
+            dist/NovaAI.exe
+            NovaAI_Setup.zip
+            NovaAI_Source.zip
+
+      - name: Publish release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Nova AI (latest build)
+          files: |
+            dist/NovaAI.exe
+            NovaAI_Setup.zip
+            NovaAI_Source.zip
