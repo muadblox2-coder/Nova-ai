@@ -1,4 +1,4 @@
-"""Nova AI - persoenlicher KI-Desktop-Assistent (PySide6 + OpenAI)."""
+"""Nova AI - persoenlicher KI-Desktop-Assistent (PySide6 + Google Gemini)."""
 import base64
 import sys
 
@@ -10,7 +10,8 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabe
                                QVBoxLayout, QWidget)
 
 APP_NAME = "NovaAI"
-MODEL = "gpt-4o-mini"
+BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
 SYSTEM_PROMPT = (
     "Du bist Nova AI, ein freundlicher persoenlicher Assistent auf dem Windows-Desktop. "
     "Antworte immer auf Deutsch, klar und verstaendlich. Wenn du einen Screenshot "
@@ -24,14 +25,14 @@ SOLVE_TRIGGERS = ("löse das", "loese das", "löse die aufgabe", "loese die aufg
 def load_key():
     try:
         import keyring
-        return keyring.get_password(APP_NAME, "openai_api_key")
+        return keyring.get_password(APP_NAME, "gemini_api_key")
     except Exception:
         return None
 
 
 def save_key(key):
     import keyring
-    keyring.set_password(APP_NAME, "openai_api_key", key)
+    keyring.set_password(APP_NAME, "gemini_api_key", key)
 
 
 # ------------------------------------------------------------------- Worker
@@ -46,7 +47,7 @@ class AIWorker(QThread):
     def run(self):
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self.api_key, timeout=60)
+            client = OpenAI(api_key=self.api_key, base_url=BASE_URL, timeout=60)
             msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + list(self.history)
             if self.image_b64:
                 last = msgs[-1]
@@ -55,8 +56,18 @@ class AIWorker(QThread):
                     {"type": "image_url", "image_url": {
                         "url": "data:image/png;base64," + self.image_b64}},
                 ]}
-            r = client.chat.completions.create(model=MODEL, messages=msgs)
-            self.done.emit(r.choices[0].message.content or "")
+            last_err = None
+            for model in MODELS:
+                try:
+                    r = client.chat.completions.create(model=model, messages=msgs)
+                    self.done.emit(r.choices[0].message.content or "")
+                    return
+                except Exception as e:  # noqa: BLE001
+                    last_err = e
+                    t = str(e).lower()
+                    if "404" not in t and "not found" not in t:
+                        raise
+            raise last_err
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
 
@@ -100,11 +111,12 @@ class KeyDialog(QDialog):
         self.setWindowTitle("Nova AI - API-Schluessel")
         self.setStyleSheet("QDialog{background:#14141c;}" + STYLE)
         lay = QVBoxLayout(self)
-        lay.addWidget(QLabel("Bitte gib deinen OpenAI-API-Schluessel ein.\n"
+        lay.addWidget(QLabel("Bitte gib deinen kostenlosen Gemini-API-Schluessel ein\n"
+                             "(aistudio.google.com -> Get API key).\n"
                              "Er wird sicher in den Windows-Anmeldeinformationen gespeichert."))
         self.edit = QLineEdit()
         self.edit.setEchoMode(QLineEdit.Password)
-        self.edit.setPlaceholderText("sk-...")
+        self.edit.setPlaceholderText("AIza...")
         lay.addWidget(self.edit)
         ok = QPushButton("Speichern")
         ok.setObjectName("send")
@@ -258,7 +270,7 @@ class Nova(QWidget):
         ans = QMessageBox.question(
             self, "Bildschirm freigeben?",
             "Nova AI moechte JETZT einen Screenshot deines Bildschirms aufnehmen und zur "
-            "Analyse an OpenAI senden.\n\nFreigeben?",
+            "Analyse an Google Gemini senden.\n\nFreigeben?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ans != QMessageBox.Yes:
             self.add("Okay, ich habe keinen Screenshot gemacht.", False)
