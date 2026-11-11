@@ -1,4 +1,4 @@
-"""Nova AI - persoenlicher KI-Desktop-Assistent (PySide6 + Google Gemini)."""
+"""Nova AI - persoenlicher KI-Desktop-Assistent (PySide6 + lokales Modell via Ollama)."""
 import base64
 import sys
 
@@ -10,8 +10,8 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabe
                                QVBoxLayout, QWidget)
 
 APP_NAME = "NovaAI"
-BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-MODELS = ["gemini-3.8-flash", "gemini-flash-latest", "gemini-2.5-flash"]
+BASE_URL = "http://localhost:11434/v1"
+MODELS = ["gemma3:4b"]
 SYSTEM_PROMPT = (
     "Du bist Nova AI, ein freundlicher persoenlicher Assistent auf dem Windows-Desktop. "
     "Antworte immer auf Deutsch, klar und verstaendlich. Wenn du einen Screenshot "
@@ -47,7 +47,7 @@ class AIWorker(QThread):
     def run(self):
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self.api_key, base_url=BASE_URL, timeout=60)
+            client = OpenAI(api_key="ollama", base_url=BASE_URL, timeout=300)
             msgs = [{"role": "system", "content": SYSTEM_PROMPT}] + list(self.history)
             if self.image_b64:
                 last = msgs[-1]
@@ -65,8 +65,13 @@ class AIWorker(QThread):
                 except Exception as e:  # noqa: BLE001
                     last_err = e
                     t = str(e).lower()
-                    if "404" not in t and "not found" not in t:
-                        raise
+                    if "connect" in t:
+                        raise RuntimeError("Ollama laeuft nicht. Bitte Ollama starten "
+                                           "(Windows-Startmenue -> Ollama).")
+                    if "404" in t or "not found" in t:
+                        raise RuntimeError("Modell fehlt. Oeffne die Eingabeaufforderung "
+                                           "und tippe: ollama pull gemma3:4b")
+                    raise
             raise last_err
         except Exception as e:  # noqa: BLE001
             self.failed.emit(str(e))
@@ -270,7 +275,7 @@ class Nova(QWidget):
         ans = QMessageBox.question(
             self, "Bildschirm freigeben?",
             "Nova AI moechte JETZT einen Screenshot deines Bildschirms aufnehmen und zur "
-            "Analyse an Google Gemini senden.\n\nFreigeben?",
+            "Analyse an das lokale Modell auf diesem PC geben.\n\nFreigeben?",
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if ans != QMessageBox.Yes:
             self.add("Okay, ich habe keinen Screenshot gemacht.", False)
@@ -317,17 +322,7 @@ class Nova(QWidget):
 
 def main():
     app = QApplication(sys.argv)
-    key = load_key()
-    if not key:
-        dlg = KeyDialog()
-        if dlg.exec() != QDialog.Accepted or not dlg.edit.text().strip():
-            return 0
-        key = dlg.edit.text().strip()
-        try:
-            save_key(key)
-        except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(None, "Nova AI", f"Schluessel konnte nicht gespeichert "
-                                f"werden: {e}\nEr gilt nur fuer diese Sitzung.")
+    key = "local"
     w = Nova(key)
     w.show()
     return app.exec()
